@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }} · DEB/RPM and tests
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            deb_arch: amd64
+            rpm_arch: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            deb_arch: arm64
+            rpm_arch: aarch64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.14.6'
+          validate-wrappers: false
+      - name: Install Linux package tools
+        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm binutils
+      - name: Verify source identity and project boundaries
+        run: scripts/source-sanity.sh
+      - name: Build desktop tests and native package formats
+        run: |
+          gradle --stacktrace \
+            :composeApp:desktopTest \
+            :composeApp:createDistributable \
+            :composeApp:packageDeb \
+            :composeApp:packageRpm \
+            -PversionName=0.1.0
+      - name: Diagnose and stage generated DEB/RPM packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_root='composeApp/build/compose/binaries/main'
+          echo '=== Complete Compose packaging output ==='
+          if [[ -d "$binary_root" ]]; then
+            find "$binary_root" -maxdepth 6 -type f -printf '%p (%s bytes)\n' | sort
+          else
+            echo "Expected Compose output directory is missing: $binary_root" >&2
+          fi
+          deb="$(find "$binary_root" -type f -name '*.deb' -print -quit 2>/dev/null || true)"
+          rpm_file="$(find "$binary_root" -type f -name '*.rpm' -print -quit 2>/dev/null || true)"
+          if [[ -z "$deb" || ! -s "$deb" ]]; then
+            echo 'ERROR: Gradle completed without producing a non-empty DEB package.' >&2
+            echo 'Relevant Gradle tasks:' >&2
+            gradle :composeApp:tasks --all | grep -Ei 'package(Deb|Rpm)|createDistributable' >&2 || true
+            exit 1
+          fi
+          if [[ -z "$rpm_file" || ! -s "$rpm_file" ]]; then
+            echo 'ERROR: Gradle completed without producing a non-empty RPM package.' >&2
+            echo 'Relevant Gradle tasks:' >&2
+            gradle :composeApp:tasks --all | grep -Ei 'package(Deb|Rpm)|createDistributable' >&2 || true
+            exit 1
+          fi
+          mkdir -p release-assets
+          cp "$deb" "release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.0.deb"
+          cp "$rpm_file" "release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.0.rpm"
+      - name: Inspect package metadata and CPU architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb="release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.0.deb"
+          rpm_file="release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.0.rpm"
+          dpkg-deb --info "$deb"
+          rpm -qpi "$rpm_file"
+          test "$(dpkg-deb -f "$deb" Architecture)" = '${{ matrix.deb_arch }}'
+          test "$(rpm -qp --qf '%{ARCH}' "$rpm_file")" = '${{ matrix.rpm_arch }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mawjictvh-linux-${{ matrix.arch }}-ci
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
+
+  android:
+    name: Android debug APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+      - name: Install Android SDK platform and build tools
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.14.6'
+          validate-wrappers: false
+      - name: Build Android debug APK
+        run: gradle --stacktrace :composeApp:assembleDebug -PversionName=0.1.0 -PversionCode=1
+      - name: Verify separate Android application identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk='composeApp/build/outputs/apk/debug/composeApp-debug.apk'
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | grep -F "package: name='app.mawjic.tvh'"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mawjictvh-android-debug-ci
+          path: composeApp/build/outputs/apk/debug/composeApp-debug.apk
+          if-no-files-found: error
+          retention-days: 7

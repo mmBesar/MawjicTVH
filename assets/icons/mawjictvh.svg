@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MawjicTVH</title>
+  <desc id="desc">A television screen with a pair of radio signal arcs.</desc>
+  <defs>
+    <linearGradient id="screen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8DE0FF"/>
+      <stop offset="1" stop-color="#A89BFF"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#203B55"/>
+      <stop offset="1" stop-color="#101D2C"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#0C1421"/>
+  <path d="M187 126c19-31 45-46 69-46s50 15 69 46" fill="none" stroke="#A7A0F5" stroke-width="18" stroke-linecap="round"/>
+  <path d="M147 105C178 58 217 34 256 34s78 24 109 71" fill="none" stroke="#78D1F5" stroke-width="18" stroke-linecap="round"/>
+  <rect x="64" y="150" width="384" height="260" rx="42" fill="#25435D"/>
+  <rect x="87" y="174" width="338" height="210" rx="25" fill="url(#screen)"/>
+  <rect x="111" y="198" width="290" height="162" rx="15" fill="url(#glass)"/>
+  <path d="M152 290c29-55 60-55 89 0s60 55 89 0" fill="none" stroke="#8DE0FF" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="395" cy="397" r="9" fill="#A89BFF"/>
+  <path d="M201 415l-27 49m137-49 27 49" stroke="#8DE0FF" stroke-width="17" stroke-linecap="round"/>
+</svg>
