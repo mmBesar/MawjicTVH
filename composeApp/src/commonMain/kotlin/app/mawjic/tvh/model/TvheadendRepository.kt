@@ -118,7 +118,7 @@ class TvheadendRepository(private val client: HtspClient) {
             description = message.text("description") ?: old?.description,
             startEpochSeconds = message.long("start") ?: old?.startEpochSeconds ?: 0,
             stopEpochSeconds = message.long("stop") ?: old?.stopEpochSeconds ?: 0,
-            isNew = (message.long("isNew") ?: 0) != 0L || message.text("isNew") == "1",
+            isNew = message.boolean("isNew") ?: ((message.long("isNew") ?: 0L) != 0L || message.text("isNew") == "1"),
         )
         _state.value = _state.value.copy(events = _state.value.events + (id to event))
     }

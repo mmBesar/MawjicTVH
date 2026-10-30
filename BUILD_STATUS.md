@@ -6,7 +6,7 @@
 
 - New Kotlin Multiplatform + Compose Android/Linux application.
 - Android namespace and application ID: `app.mawjic.tvh` (not `app.mawjic.tv`).
-- Independent Android launcher artwork and Linux package icon.
+- Independent Android launcher artwork and Linux package icon; Linux package ID: `mawjictvh`.
 - HTSMSG binary message codec for map, list, S64, string, binary, boolean, and 64-bit UUID fields.
 - Bounded HTSP TCP framing, `hello` protocol negotiation, SHA-1 challenge-response authentication, RPC sequence correlation, and `enableAsyncMetadata` initialization.
 - Tvheadend channel/tag/EPG initial metadata ingestion and update/delete handling.

@@ -43,6 +43,7 @@ class HtspClientTest {
             assertEquals(1L, state.channels[101]?.number)
             assertEquals(listOf(7L), state.channels[101]?.tagIds)
             assertEquals("News at Ten", state.events[9001]?.title)
+            assertEquals(true, state.events[9001]?.isNew)
             assertEquals(7L, state.tags[7]?.index)
             assertTrue(transport.authenticationVerified)
         } finally {
@@ -118,6 +119,7 @@ class HtspClientTest {
                     "title" to hstr("News at Ten"),
                     "start" to s64(1_800_000_000),
                     "stop" to s64(1_800_003_600),
+                    "isNew" to HtsValue.BooleanValue(true),
                 )))
                 incoming.send(HtsMessageCodec.encodeBody(HtsMessage.mapOf("method" to hstr("initialSyncCompleted"))))
             }
