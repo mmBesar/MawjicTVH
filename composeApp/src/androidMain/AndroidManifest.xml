@@ -3,6 +3,7 @@
 
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:icon="@drawable/ic_launcher"
         android:label="MawjicTVH"
         android:supportsRtl="true"

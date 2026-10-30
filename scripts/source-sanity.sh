@@ -24,5 +24,10 @@ fi
 grep -Rq 'PREFERRED_HTSP_VERSION = 44' "$SRC/commonMain" || fail 'HTSP protocol negotiation is missing.'
 grep -Rq 'enableAsyncMetadata' "$SRC/commonMain" || fail 'Native HTSP metadata initialization is missing.'
 grep -Rq 'channelAdd' "$SRC/commonMain" || fail 'HTSP channel metadata handling is missing.'
+grep -Rq 'getTicket' "$SRC/commonMain" || fail 'Native Tvheadend ticket-based playback authorization is missing.'
+grep -Rq 'media3-exoplayer' "$ROOT/composeApp/build.gradle.kts" || fail 'Android Media3 player dependency is missing.'
+grep -Rq 'ProcessBuilder' "$SRC/desktopMain/kotlin/app/mawjic/tvh/player" || fail 'Linux mpv playback adapter is missing.'
+[[ -s "$SRC/androidMain/kotlin/app/mawjic/tvh/player/PlatformTvheadendPlayer.android.kt" ]] || fail 'Android player implementation is missing.'
+[[ -s "$SRC/desktopMain/kotlin/app/mawjic/tvh/player/PlatformTvheadendPlayer.desktop.kt" ]] || fail 'Linux player implementation is missing.'
 
 echo 'Source boundary checks completed.'

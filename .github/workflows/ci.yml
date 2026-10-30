@@ -39,23 +39,31 @@ jobs:
         with:
           gradle-version: '8.14.6'
           validate-wrappers: false
-      - name: Install Linux package tools
-        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm binutils
+      - name: Install Linux packaging and player tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot rpm binutils dpkg-dev mpv
+          command -v fakeroot
+          command -v dpkg-deb
+          command -v rpmbuild
+          mpv --version | head -n 1
       - name: Verify source identity and project boundaries
         run: scripts/source-sanity.sh
       - name: Build desktop tests and native package formats
+        shell: bash
         run: |
-          gradle --stacktrace \
+          set -euo pipefail
+          gradle --stacktrace --info \
             :composeApp:desktopTest \
             :composeApp:createDistributable \
             :composeApp:packageDeb \
             :composeApp:packageRpm \
-            -PversionName=0.1.0
+            -PversionName=0.1.0 2>&1 | tee gradle-packaging.log
       - name: Diagnose and stage generated DEB/RPM packages
         shell: bash
         run: |
           set -euo pipefail
-          binary_root='composeApp/build/compose/binaries/main'
+          binary_root='composeApp/build/compose/binaries'
           echo '=== Complete Compose packaging output ==='
           if [[ -d "$binary_root" ]]; then
             find "$binary_root" -maxdepth 6 -type f -printf '%p (%s bytes)\n' | sort
@@ -66,14 +74,24 @@ jobs:
           rpm_file="$(find "$binary_root" -type f -name '*.rpm' -print -quit 2>/dev/null || true)"
           if [[ -z "$deb" || ! -s "$deb" ]]; then
             echo 'ERROR: Gradle completed without producing a non-empty DEB package.' >&2
-            echo 'Relevant Gradle tasks:' >&2
-            gradle :composeApp:tasks --all | grep -Ei 'package(Deb|Rpm)|createDistributable' >&2 || true
+            echo 'Relevant generated build files:' >&2
+            find composeApp/build -maxdepth 8 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%p (%s bytes)\n' 2>/dev/null | sort >&2 || true
+            echo 'Packaging tool versions:' >&2
+            dpkg-deb --version | head -n 1 >&2 || true
+            rpm --version >&2 || true
+            echo 'Relevant Gradle packaging log lines:' >&2
+            grep -Ei 'packageDeb|packageRpm|jpackage|error|failed' gradle-packaging.log | tail -n 100 >&2 || true
             exit 1
           fi
           if [[ -z "$rpm_file" || ! -s "$rpm_file" ]]; then
             echo 'ERROR: Gradle completed without producing a non-empty RPM package.' >&2
-            echo 'Relevant Gradle tasks:' >&2
-            gradle :composeApp:tasks --all | grep -Ei 'package(Deb|Rpm)|createDistributable' >&2 || true
+            echo 'Relevant generated build files:' >&2
+            find composeApp/build -maxdepth 8 -type f \( -name '*.deb' -o -name '*.rpm' \) -printf '%p (%s bytes)\n' 2>/dev/null | sort >&2 || true
+            echo 'Packaging tool versions:' >&2
+            dpkg-deb --version | head -n 1 >&2 || true
+            rpm --version >&2 || true
+            echo 'Relevant Gradle packaging log lines:' >&2
+            grep -Ei 'packageDeb|packageRpm|jpackage|error|failed' gradle-packaging.log | tail -n 100 >&2 || true
             exit 1
           fi
           mkdir -p release-assets
@@ -94,6 +112,13 @@ jobs:
           name: mawjictvh-linux-${{ matrix.arch }}-ci
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mawjictvh-linux-${{ matrix.arch }}-gradle-log
+          path: gradle-packaging.log
+          if-no-files-found: warn
           retention-days: 7
 
   android:

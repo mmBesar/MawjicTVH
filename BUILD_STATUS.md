@@ -1,39 +1,43 @@
 # Build and implementation status
 
-**Baseline:** 0.1.0 · first clean Tvheadend-native milestone · 2026-10-31
+**Baseline:** 0.1.0 · first functional playback milestone · 2026-10-31
 
 ## Implemented in source
 
-- New Kotlin Multiplatform + Compose Android/Linux application.
-- Android namespace and application ID: `app.mawjic.tvh` (not `app.mawjic.tv`).
-- Independent Android launcher artwork and Linux package icon; Linux package ID: `mawjictvh`.
-- HTSMSG binary message codec for map, list, S64, string, binary, boolean, and 64-bit UUID fields.
-- Bounded HTSP TCP framing, `hello` protocol negotiation, SHA-1 challenge-response authentication, RPC sequence correlation, and `enableAsyncMetadata` initialization.
-- Tvheadend channel/tag/EPG initial metadata ingestion and update/delete handling.
-- Basic Android/Linux connection UI and channel list.
-- GitHub Actions matrix for independent Linux AMD64/ARM64 DEB+RPM packages and Android debug APK.
-- CI package step inspects the complete Compose output tree and emits actionable diagnostics when DEB/RPM artifacts are absent.
+- New Kotlin Multiplatform + Compose Android/Linux application, separate from Mawjic IPTV.
+- Android namespace/application ID: `app.mawjic.tvh`; Linux package ID: `mawjictvh`; distinct launcher artwork.
+- HTSMSG binary codec, bounded HTSP TCP framing, protocol negotiation, SHA-1 challenge-response authentication, RPC sequence correlation, and asynchronous metadata initialization.
+- Tvheadend channel/tag/EPG initial metadata and update/delete notifications.
+- Channel browser with current EPG title where available.
+- Native HTSP `getTicket` request for the selected Tvheadend channel and safe construction of the returned ticketed stream URL, including optional `webroot`, HTTPS, IPv6 literals, and query encoding.
+- Android embedded Media3/ExoPlayer player with buffering indicator, controls, keep-screen-on, resource release, and user-facing network/permission/codec error categories.
+- Linux mpv process adapter. It opens a separate mpv window and reports missing mpv and non-zero playback exits.
+- CI matrix for Linux AMD64/ARM64 DEB+RPM packages and an Android debug APK. Linux diagnostics inspect the complete packaging output tree and identify missing package tools/artifacts.
 
-## Not implemented yet
+## Playback design and scope
 
-- Actual live playback: `subscribe`, `subscriptionStart`, `muxpkt`, timestamp/codec mapping and Media3/mpv adapters.
-- Artwork fetching/authentication, programme timeline UI, favourites, search, DVR/recording controls, tuner diagnostics, reconnection and saved server profiles.
-- Release APK signing and public release automation.
+This milestone uses the server's documented HTSP `getTicket` operation to obtain a temporary, channel-specific HTTP(S) access ticket. The server-provided path and ticket are then passed to the platform decoder. The media bytes come from Tvheadend's built-in streaming listener; metadata and playback authorization are handled through HTSP. This is an official Tvheadend-supported playback route, not imported M3U/XMLTV content.
+
+Android's Media3 supports MPEG-TS as a progressive container, but decoding still depends on the actual audio/video codecs and device decoder. Linux uses mpv, which must be installed separately. The current Linux DEB/RPM do not declare/install mpv automatically.
+
+## Not yet implemented
+
+- End-to-end playback test against a live Tvheadend server and validation of actual streaming profiles/codecs on Android and Linux.
+- Direct HTSP `subscribe`/`subscriptionStart`/`muxpkt` packet playback path. The current MVP deliberately uses `getTicket` because Tvheadend provides that official HTTP ticket route for players.
+- Artwork fetching/authentication, full EPG timeline UI, favourites, search, reconnection, saved server profiles, credential vault, tuner diagnostics, DVR/recording controls, and release signing.
+- Embedded Linux video surface; Linux playback currently opens the external mpv window.
 
 ## Verification performed in the authoring environment
 
-- Compiled the common HTSP codec, session/client, metadata repository, transport contract, and JVM socket transport with the installed Kotlin compiler. The standalone compile emits only the expected Kotlin 1.9 warning caused by compiling `expect` and `actual` together for this check.
-- Ran six codec tests and a simulated-server integration test covering `hello`, SHA-1 challenge authentication, `enableAsyncMetadata`, and channel/tag/EPG metadata delivery; all passed.
-- `scripts/source-sanity.sh`, shell syntax checks, XML/SVG parsing, YAML parsing, and Git whitespace checks are run before packaging.
-- This environment cannot resolve the Gradle download host and has no cached pinned Gradle distribution or Android SDK. Therefore the Compose Android/UI build, actual Gradle `desktopTest` task, Android APK, and Linux installers are **not claimed as locally verified**. The first fresh GitHub Actions run is the required build gate.
-- No live Tvheadend server is attached to this authoring environment, so socket interoperability and the channel/EPG snapshot are not claimed as server-tested.
+- Compiled the common HTSP codec, session/client, metadata repository, transport contract, JVM socket transport, and new playback-ticket service with the installed Kotlin compiler.
+- Ran a standalone simulated-server smoke test covering HTSP 44 negotiation, challenge authentication, native channel metadata, `getTicket`, reverse-proxy webroot handling, IPv6 URL formatting, and percent-encoded ticket construction; all passed.
+- Added Gradle unit tests for ticket URLs (HTTP, HTTPS/webroot, IPv6, query encoding and invalid hosts) and expanded the desktop HTSP integration test to verify the requested channel ID and returned ticket URL. The hosted Gradle test run is still required.
+- Source-boundary checks, shell syntax checks, XML/SVG parsing, YAML parsing and Git whitespace checks are included in the local validation pass.
+- This environment cannot resolve the Gradle download host and has no cached pinned Gradle distribution or Android SDK. Therefore Android/Compose compilation, hosted Gradle tests, APK generation and Linux installers are **not claimed as build-verified**.
+- No live Tvheadend server is attached. Do not call playback end-to-end tested until one real server/channel has been played successfully on each platform.
 
-## Acceptance criteria for the first hosted CI run
+## First hosted CI acceptance criteria
 
 - Linux AMD64 and ARM64: `desktopTest`, `createDistributable`, `packageDeb`, `packageRpm`; verify package metadata and CPU architecture.
-- Android: `assembleDebug`; inspect the built APK to confirm `app.mawjic.tvh`. It is a platform-neutral debug APK (and runs on ARM64); it is not an ABI-filtered ARM64-only package.
-- All jobs must be green before calling this baseline build-verified.
-
-## Next milestone
-
-Build a repeatable playback proof against a real Tvheadend server: subscribe to one channel, decode stream descriptors, persistently receive `muxpkt`, preserve DTS/PTS, and demonstrate a stable stream on Android and Linux. Do not start a major UI redesign until this is demonstrated.
+- Android: `assembleDebug`; inspect the built APK and confirm `app.mawjic.tvh`.
+- All jobs green, followed by a real Tvheadend channel playback check, before calling the release baseline complete.

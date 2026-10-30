@@ -1,6 +1,8 @@
 package app.mawjic.tvh.client
 
 import app.mawjic.tvh.model.TvheadendRepository
+import app.mawjic.tvh.playback.TvheadendHttpEndpoint
+import app.mawjic.tvh.playback.TvheadendPlaybackService
 import app.mawjic.tvh.protocol.HtsMessage
 import app.mawjic.tvh.protocol.HtsMessageCodec
 import app.mawjic.tvh.protocol.HtsValue
@@ -46,6 +48,12 @@ class HtspClientTest {
             assertEquals(true, state.events[9001]?.isNew)
             assertEquals(7L, state.tags[7]?.index)
             assertTrue(transport.authenticationVerified)
+            val streamUrl = TvheadendPlaybackService(
+                client,
+                TvheadendHttpEndpoint("tvheadend.home", 9981, webRoot = server.webRoot),
+            ).createChannelStreamUrl(101L)
+            assertEquals("http://tvheadend.home:9981/stream/channelid/101?ticket=TEST-TICKET-101", streamUrl)
+            assertEquals(101L, transport.lastTicketChannelId)
         } finally {
             observer.cancel()
             scope.cancel()
@@ -60,6 +68,8 @@ class HtspClientTest {
     ) : HtspTransport {
         private val incoming = Channel<ByteArray>(Channel.UNLIMITED)
         var authenticationVerified: Boolean = false
+            private set
+        var lastTicketChannelId: Long? = null
             private set
 
         override suspend fun connect(host: String, port: Int) {
@@ -79,6 +89,7 @@ class HtspClientTest {
                     "servername" to hstr("Living Room TV"),
                     "serverversion" to hstr("4.3-999~g123456"),
                     "challenge" to hbin(challenge),
+                    "webroot" to hstr(""),
                     "servercapability" to HtsValue.ListValue(listOf(hstr("imagecache"), hstr("timeshift"))),
                 )
                 "authenticate" -> {
@@ -93,6 +104,14 @@ class HtspClientTest {
                     )
                 }
                 "enableAsyncMetadata" -> HtsMessage.mapOf("seq" to s64(seq))
+                "getTicket" -> {
+                    lastTicketChannelId = request.long("channelId")
+                    HtsMessage.mapOf(
+                        "seq" to s64(seq),
+                        "path" to hstr("/stream/channelid/${lastTicketChannelId}"),
+                        "ticket" to hstr("TEST-TICKET-${lastTicketChannelId}"),
+                    )
+                }
                 else -> error("Unexpected HTSP RPC: ${request.text("method")}")
             }
             incoming.send(HtsMessageCodec.encodeBody(reply))

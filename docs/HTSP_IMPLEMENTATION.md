@@ -56,17 +56,21 @@ The client currently treats a response with `error` or `noaccess` as an RPC fail
 
 Unknown methods are ignored by the metadata repository. The client transport still receives them so future work can add subscription status, tuner signal, and streaming packet handling without changing the wire layer.
 
-## Playback is an explicit next gate
+## Playback path implemented in this milestone
 
-The next protocol spike must:
+The first functional player uses Tvheadend's own ticket mechanism rather than attempting to reconstruct a media stream from raw `muxpkt` packets before we have an end-to-end player:
 
-1. Send `subscribe` for a real `channelId` and capture its `subscriptionId`.
-2. Parse the `subscriptionStart` stream descriptors and codec metadata.
-3. Capture `muxpkt` payloads and their `frametype`, stream index, DTS/PTS and duration.
-4. Demonstrate sustained audio/video output on a real Tvheadend server.
-5. Handle subscription stop/error, stream changes, channel changes, and teardown without leaking a server subscription.
+1. The app authenticates and obtains channel metadata on the persistent HTSP connection.
+2. On channel selection it calls HTSP `getTicket` with `channelId`.
+3. Tvheadend returns `path` and `ticket`. The ticket authorizes access to that channel over the HTTP streaming interface.
+4. The app builds the stream URL from the server-provided path and the configured streaming listener, including `webroot` when configured.
+5. Android hands the URL to Media3/ExoPlayer; Linux launches mpv with the same URL.
 
-HTSP packets are not ordinary HTTP media URLs. The implementation must preserve stream boundaries, timestamps and codec initialization. Android Media3 and Linux mpv may require different adapters; neither should force a regression in the other platform's player experience.
+This is not playlist playback. The `getTicket` RPC is defined by Tvheadend's HTSP API and the media URL is issued by the server. The output container/codec is controlled by the Tvheadend streaming profile. Android Media3 supports MPEG-TS as a progressive container, while actual audio/video decoding still depends on sample codec support on the device. Linux delegates decoding to mpv.
+
+The next gate is to play a real channel from a real Tvheadend installation on both platforms, checking permissions, reverse-proxy `webroot`, HTTPS listener, stream profile and codec compatibility. The UI must show a clear failure instead of claiming playback is working when a ticket, stream or decoder fails.
+
+A later advanced option is a direct HTSP packet pipeline using `subscribe`, `subscriptionStart`, and `muxpkt`. It must preserve stream descriptors, codec initialization, DTS/PTS and stream changes, and should only replace the ticketed route if it provides a concrete advantage without regressions.
 
 ## Security and operational boundaries
 
