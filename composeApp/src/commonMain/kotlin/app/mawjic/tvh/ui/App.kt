@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +57,10 @@ import app.mawjic.tvh.player.PlatformTvheadendPlayer
 import app.mawjic.tvh.protocol.createHtspTransport
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private const val METADATA_SYNC_WARNING_MS = 15_000L
 
 private val MawjicPalette = darkColorScheme(
     primary = Color(0xFF73C9F5),
@@ -74,9 +78,12 @@ private val MawjicPalette = darkColorScheme(
 fun App() {
     MaterialTheme(colorScheme = MawjicPalette) {
         var host by remember { mutableStateOf("") }
+        var playbackHost by remember { mutableStateOf("") }
         var htspPort by remember { mutableStateOf("9982") }
-        var httpPort by remember { mutableStateOf("9981") }
-        var useHttps by remember { mutableStateOf(false) }
+        // This project is being configured around the user's Caddy HTTPS endpoint.
+        var httpPort by remember { mutableStateOf("443") }
+        var useHttps by remember { mutableStateOf(true) }
+        var htspTls by remember { mutableStateOf(false) }
         var username by remember { mutableStateOf("") }
         var password by remember { mutableStateOf("") }
         var connecting by remember { mutableStateOf(false) }
@@ -86,6 +93,7 @@ fun App() {
         var serverInfo by remember { mutableStateOf<HtspServerInfo?>(null) }
         var client by remember { mutableStateOf<HtspClient?>(null) }
         var repository by remember { mutableStateOf<TvheadendRepository?>(null) }
+        var metadataWaitExpired by remember(repository) { mutableStateOf(false) }
         var playbackService by remember { mutableStateOf<TvheadendPlaybackService?>(null) }
         var currentChannel by remember { mutableStateOf<TvChannel?>(null) }
         var streamUrl by remember { mutableStateOf<String?>(null) }
@@ -93,6 +101,16 @@ fun App() {
         val scope = rememberCoroutineScope()
         val snapshotFlow = remember(repository) { repository?.state ?: MutableStateFlow(TvheadendSnapshot()) }
         val snapshot by snapshotFlow.collectAsState()
+
+        LaunchedEffect(repository) {
+            metadataWaitExpired = false
+            val activeRepository = repository ?: return@LaunchedEffect
+            delay(METADATA_SYNC_WARNING_MS)
+            val latest = activeRepository.state.value
+            if (!latest.initialSyncCompleted && latest.channels.isEmpty() && latest.syncError == null) {
+                metadataWaitExpired = true
+            }
+        }
 
         DisposableEffect(client) {
             onDispose { client?.close() }
@@ -124,12 +142,16 @@ fun App() {
                             modifier = Modifier.fillMaxWidth().weight(1f),
                             host = host,
                             onHostChange = { host = it },
+                            playbackHost = playbackHost,
+                            onPlaybackHostChange = { playbackHost = it },
                             htspPort = htspPort,
                             onHtspPortChange = { htspPort = it.filter(Char::isDigit).take(5) },
                             httpPort = httpPort,
                             onHttpPortChange = { httpPort = it.filter(Char::isDigit).take(5) },
                             useHttps = useHttps,
                             onUseHttpsChange = { useHttps = it },
+                            htspTls = htspTls,
+                            onHtspTlsChange = { htspTls = it },
                             username = username,
                             onUsernameChange = { username = it },
                             password = password,
@@ -142,13 +164,14 @@ fun App() {
                                 val parsedHttpPort = httpPort.toIntOrNull()
                                 when {
                                     host.isBlank() -> connectionError = "Enter the hostname or IP address of your Tvheadend server."
-                                    host.contains("://") -> connectionError = "Enter the hostname or IP address only, without http:// or https://."
+                                    host.contains("://") -> connectionError = "Enter the HTSP hostname or IP address only, without http:// or https://."
+                                    playbackHost.contains("://") -> connectionError = "Enter the playback hostname only, without http:// or https://."
                                     parsedHtspPort == null || parsedHtspPort !in 1..65535 -> connectionError = "Enter a valid HTSP TCP port."
                                     parsedHttpPort == null || parsedHttpPort !in 1..65535 -> connectionError = "Enter a valid HTTP port."
                                     else -> {
                                         connecting = true
                                         scope.launch {
-                                            val newClient = HtspClient(createHtspTransport())
+                                            val newClient = HtspClient(createHtspTransport(useTls = htspTls))
                                             val newRepository = TvheadendRepository(newClient)
                                             val newObserver = newRepository.observe(scope)
                                             try {
@@ -163,7 +186,7 @@ fun App() {
                                                 playbackService = TvheadendPlaybackService(
                                                     newClient,
                                                     TvheadendHttpEndpoint(
-                                                        host = host.trim(),
+                                                        host = playbackHost.trim().ifBlank { host.trim() },
                                                         port = parsedHttpPort,
                                                         useHttps = useHttps,
                                                         webRoot = info.webRoot,
@@ -245,10 +268,14 @@ fun App() {
                                 Spacer(Modifier.width(8.dp))
                                 Text(
                                     if (snapshot.initialSyncCompleted) "${snapshot.channels.size} channels · ${snapshot.tags.size} groups · ${snapshot.events.size} EPG events"
-                                    else "Connected · receiving server metadata…",
+                                    else "Receiving metadata · ${snapshot.channels.size} channels · ${snapshot.events.size} EPG events",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
+                            }
+                            if (snapshot.syncError != null) {
+                                Spacer(Modifier.height(8.dp))
+                                Text("HTSP receive error: ${snapshot.syncError}", color = MaterialTheme.colorScheme.error)
                             }
                             if (playbackError != null) {
                                 Spacer(Modifier.height(8.dp))
@@ -256,17 +283,7 @@ fun App() {
                             }
                             Spacer(Modifier.height(8.dp))
                             when {
-                                !snapshot.initialSyncCompleted -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        CircularProgressIndicator()
-                                        Spacer(Modifier.height(14.dp))
-                                        Text("Loading channels and guide from Tvheadend…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                                snapshot.channels.isEmpty() -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                                    Text("The server connected, but it did not provide any accessible channels.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                else -> ChannelList(
+                                snapshot.channels.isNotEmpty() -> ChannelList(
                                     snapshot = snapshot,
                                     modifier = Modifier.fillMaxWidth().weight(1f),
                                     requestingPlayback = requestingPlayback,
@@ -289,6 +306,38 @@ fun App() {
                                         }
                                     },
                                 )
+                                snapshot.syncError != null -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        "The HTSP metadata stream stopped. The error is shown above. Check the HTSP route and server logs, then reconnect.",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                snapshot.initialSyncCompleted -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        "Tvheadend completed its initial sync but provided no channels accessible to this account. Check channel access and the account's Streaming permission.",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                else -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        if (!metadataWaitExpired) CircularProgressIndicator()
+                                        Spacer(Modifier.height(14.dp))
+                                        Text(
+                                            if (metadataWaitExpired) {
+                                                "Connected, but no channel metadata has arrived after 15 seconds. Check that this is the native HTSP TCP endpoint (normally 9982), that Caddy is forwarding raw HTSP if TLS is enabled, and that the account has Streaming permission."
+                                            } else {
+                                                "Waiting for channels and EPG from Tvheadend…"
+                                            },
+                                            color = if (metadataWaitExpired) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        Spacer(Modifier.height(8.dp))
+                                        Text(
+                                            "${snapshot.receivedMessageCount} server messages · last: ${snapshot.lastMessageMethod ?: "none"}",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
                             }
                             if (requestingPlayback) {
                                 Spacer(Modifier.height(8.dp))
@@ -313,12 +362,16 @@ private fun ConnectionForm(
     modifier: Modifier,
     host: String,
     onHostChange: (String) -> Unit,
+    playbackHost: String,
+    onPlaybackHostChange: (String) -> Unit,
     htspPort: String,
     onHtspPortChange: (String) -> Unit,
     httpPort: String,
     onHttpPortChange: (String) -> Unit,
     useHttps: Boolean,
     onUseHttpsChange: (Boolean) -> Unit,
+    htspTls: Boolean,
+    onHtspTlsChange: (Boolean) -> Unit,
     username: String,
     onUsernameChange: (String) -> Unit,
     password: String,
@@ -344,19 +397,47 @@ private fun ConnectionForm(
                 OutlinedTextField(
                     value = host, onValueChange = onHostChange,
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text("Server address") }, placeholder = { Text("tvheadend.home") },
+                    label = { Text("HTSP server address") }, placeholder = { Text("192.168.1.10 or tvheadend.home") },
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = playbackHost, onValueChange = onPlaybackHostChange,
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    label = { Text("HTTPS playback hostname (optional)") },
+                    placeholder = { Text("tvheadend.example.com") },
+                )
+                Text(
+                    "Leave blank to use the HTSP address above. Set this to your Caddy hostname when HTSP connects directly over LAN/VPN.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
                 )
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = htspPort, onValueChange = onHtspPortChange,
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text("HTSP TCP port") }, placeholder = { Text("9982") },
+                    label = { Text(if (htspTls) "HTSP TLS port" else "HTSP TCP port") },
+                    placeholder = { Text(if (htspTls) "443 (Caddy Layer 4)" else "9982") },
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Use TLS for HTSP")
+                        Text(
+                            "Enable only when a TLS listener (for example Caddy Layer 4) forwards raw HTSP to Tvheadend. Standard HTTP reverse_proxy cannot carry raw HTSP TCP.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Switch(checked = htspTls, onCheckedChange = onHtspTlsChange)
+                }
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = httpPort, onValueChange = onHttpPortChange,
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text("Streaming port (HTTP/HTTPS)") }, placeholder = { Text("9981") },
+                    label = { Text("Playback port (HTTP/HTTPS)") }, placeholder = { Text(if (useHttps) "443" else "9981") },
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -365,7 +446,7 @@ private fun ConnectionForm(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Use HTTPS for playback")
-                        Text("Use the HTTPS port configured on Tvheadend or your reverse proxy.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Text("Enabled by default for Caddy. Turn off only for direct HTTP streaming (usually port 9981).", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     }
                     Switch(checked = useHttps, onCheckedChange = onUseHttpsChange)
                 }
@@ -403,7 +484,7 @@ private fun ConnectionForm(
         }
         Spacer(Modifier.height(14.dp))
         Text(
-            "HTSP itself is not encrypted. Use a trusted LAN or VPN for the HTSP connection. For playback over HTTPS, enter the HTTPS listener or reverse-proxy port. The account needs permission to stream the selected channel.",
+            "Recommended Caddy setup: HTSP connects to Tvheadend's raw TCP listener (usually 9982) over LAN/VPN; playback uses your Caddy hostname on HTTPS port 443. Put the Caddy hostname in the optional playback field when it differs from the HTSP address. Standard Caddy reverse_proxy handles the HTTPS stream, but not raw HTSP. To proxy HTSP through Caddy, configure a Layer 4 TCP route and enable HTSP TLS here. Install Caddy's local root CA in Android's user CA store; the app still validates certificate trust and hostname. The account needs HTSP and Streaming permissions.",
             modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,

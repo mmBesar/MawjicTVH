@@ -18,46 +18,52 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlin.test.Test
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.junit.runners.JUnit4
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+@RunWith(JUnit4::class)
 class HtspClientTest {
     @Test
-    fun connectsAuthenticatesAndReceivesNativeMetadata() = runBlocking {
-        val challenge = ByteArray(32) { (it * 3).toByte() }
-        val transport = FakeHtspTransport(challenge, expectedUsername = "tvh", expectedPassword = "secret")
-        val client = HtspClient(transport, requestTimeoutMillis = 2_000)
-        val scope = CoroutineScope(Dispatchers.Default)
-        val repository = TvheadendRepository(client)
-        val observer = repository.observe(scope)
+    fun connectsAuthenticatesAndReceivesNativeMetadata(): Unit {
+        runBlocking {
+            val challenge = ByteArray(32) { (it * 3).toByte() }
+            val transport = FakeHtspTransport(challenge, expectedUsername = "tvh", expectedPassword = "secret")
+            val client = HtspClient(transport, requestTimeoutMillis = 2_000)
+            val scope = CoroutineScope(Dispatchers.Default)
+            val repository = TvheadendRepository(client)
+            val observer = repository.observe(scope)
 
-        try {
-            val server = client.connect("tvheadend.home", username = "tvh", password = "secret")
-            assertEquals("Living Room TV", server.name)
-            assertEquals("4.3-999~g123456", server.version)
-            assertEquals(44, server.protocolVersion)
+            try {
+                val server = client.connect("tvheadend.home", username = "tvh", password = "secret")
+                assertEquals("Living Room TV", server.name)
+                assertEquals("4.3-999~g123456", server.version)
+                assertEquals(44, server.protocolVersion)
 
-            val state = withTimeout(2_000) {
-                repository.state.first { it.initialSyncCompleted }
+                val state = withTimeout(2_000) {
+                    repository.state.first { it.initialSyncCompleted }
+                }
+                assertEquals("BBC One", state.channels[101]?.name)
+                assertEquals(1L, state.channels[101]?.number)
+                assertEquals(listOf(7L), state.channels[101]?.tagIds)
+                assertEquals("News at Ten", state.events[9001]?.title)
+                assertEquals(520, state.events.size, "all batched EPG events must be published at initial sync completion")
+                assertEquals(true, state.events[9001]?.isNew)
+                assertEquals(7L, state.tags[7]?.index)
+                assertTrue(transport.authenticationVerified)
+                val streamUrl = TvheadendPlaybackService(
+                    client,
+                    TvheadendHttpEndpoint("tvheadend.home", 9981, webRoot = server.webRoot),
+                ).createChannelStreamUrl(101L)
+                assertEquals("http://tvheadend.home:9981/stream/channelid/101?ticket=TEST-TICKET-101", streamUrl)
+                assertEquals(101L, transport.lastTicketChannelId)
+            } finally {
+                observer.cancel()
+                scope.cancel()
+                client.close()
             }
-            assertEquals("BBC One", state.channels[101]?.name)
-            assertEquals(1L, state.channels[101]?.number)
-            assertEquals(listOf(7L), state.channels[101]?.tagIds)
-            assertEquals("News at Ten", state.events[9001]?.title)
-            assertEquals(true, state.events[9001]?.isNew)
-            assertEquals(7L, state.tags[7]?.index)
-            assertTrue(transport.authenticationVerified)
-            val streamUrl = TvheadendPlaybackService(
-                client,
-                TvheadendHttpEndpoint("tvheadend.home", 9981, webRoot = server.webRoot),
-            ).createChannelStreamUrl(101L)
-            assertEquals("http://tvheadend.home:9981/stream/channelid/101?ticket=TEST-TICKET-101", streamUrl)
-            assertEquals(101L, transport.lastTicketChannelId)
-        } finally {
-            observer.cancel()
-            scope.cancel()
-            client.close()
         }
     }
 
@@ -103,7 +109,14 @@ class HtspClientTest {
                         "noaccess" to s64(if (valid) 0 else 1),
                     )
                 }
-                "enableAsyncMetadata" -> HtsMessage.mapOf("seq" to s64(seq))
+                "enableAsyncMetadata" -> {
+                    assertEquals(1L, request.long("epg"), "HTSP EPG delivery must be explicitly enabled")
+                    val lastUpdate = request.long("lastUpdate") ?: error("lastUpdate is required")
+                    val epgMaxTime = request.long("epgMaxTime") ?: error("epgMaxTime is required")
+                    assertTrue(lastUpdate > 0L)
+                    assertTrue(epgMaxTime - lastUpdate >= 14L * 24L * 60L * 60L)
+                    HtsMessage.mapOf("seq" to s64(seq))
+                }
                 "getTicket" -> {
                     lastTicketChannelId = request.long("channelId")
                     HtsMessage.mapOf(
@@ -131,15 +144,19 @@ class HtspClientTest {
                     "tags" to HtsValue.ListValue(listOf(s64(7))),
                     "eventId" to s64(9001),
                 )))
-                incoming.send(HtsMessageCodec.encodeBody(HtsMessage.mapOf(
-                    "method" to hstr("eventAdd"),
-                    "eventId" to s64(9001),
-                    "channelId" to s64(101),
-                    "title" to hstr("News at Ten"),
-                    "start" to s64(1_800_000_000),
-                    "stop" to s64(1_800_003_600),
-                    "isNew" to HtsValue.BooleanValue(true),
-                )))
+                repeat(520) { offset ->
+                    val eventId = 9001L + offset
+                    val event = HtsMessage.mapOf(
+                        "method" to hstr("eventAdd"),
+                        "eventId" to s64(eventId),
+                        "channelId" to s64(101),
+                        "title" to hstr(if (offset == 0) "News at Ten" else "Programme $eventId"),
+                        "start" to s64(1_800_000_000L + offset * 3_600L),
+                        "stop" to s64(1_800_003_600L + offset * 3_600L),
+                        "isNew" to HtsValue.BooleanValue(offset == 0),
+                    )
+                    incoming.send(HtsMessageCodec.encodeBody(event))
+                }
                 incoming.send(HtsMessageCodec.encodeBody(HtsMessage.mapOf("method" to hstr("initialSyncCompleted"))))
             }
         }

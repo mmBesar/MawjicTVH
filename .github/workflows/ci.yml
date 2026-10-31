@@ -49,16 +49,32 @@ jobs:
           mpv --version | head -n 1
       - name: Verify source identity and project boundaries
         run: scripts/source-sanity.sh
-      - name: Build desktop tests and native package formats
+      - name: Run desktop unit tests
         shell: bash
         run: |
           set -euo pipefail
-          gradle --stacktrace --info \
-            :composeApp:desktopTest \
+          gradle --no-daemon --stacktrace --info \
+            :composeApp:desktopTest 2>&1 | tee desktop-test.log
+      - name: Upload desktop test reports and full log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mawjictvh-linux-${{ matrix.arch }}-desktop-test-diagnostics
+          path: |
+            desktop-test.log
+            composeApp/build/reports/tests/desktopTest/**
+            composeApp/build/test-results/desktopTest/**
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Build Linux application and DEB/RPM packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace --info \
             :composeApp:createDistributable \
             :composeApp:packageDeb \
             :composeApp:packageRpm \
-            -PversionName=0.1.0 2>&1 | tee gradle-packaging.log
+            -PversionName=0.1.2 2>&1 | tee gradle-packaging.log
       - name: Diagnose and stage generated DEB/RPM packages
         shell: bash
         run: |
@@ -95,14 +111,14 @@ jobs:
             exit 1
           fi
           mkdir -p release-assets
-          cp "$deb" "release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.0.deb"
-          cp "$rpm_file" "release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.0.rpm"
+          cp "$deb" "release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.2.deb"
+          cp "$rpm_file" "release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.2.rpm"
       - name: Inspect package metadata and CPU architecture
         shell: bash
         run: |
           set -euo pipefail
-          deb="release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.0.deb"
-          rpm_file="release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.0.rpm"
+          deb="release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.2.deb"
+          rpm_file="release-assets/mawjictvh-linux-${{ matrix.arch }}-0.1.2.rpm"
           dpkg-deb --info "$deb"
           rpm -qpi "$rpm_file"
           test "$(dpkg-deb -f "$deb" Architecture)" = '${{ matrix.deb_arch }}'
@@ -140,7 +156,22 @@ jobs:
           gradle-version: '8.14.6'
           validate-wrappers: false
       - name: Build Android debug APK
-        run: gradle --stacktrace :composeApp:assembleDebug -PversionName=0.1.0 -PversionCode=1
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace --info \
+            :composeApp:assembleDebug -PversionName=0.1.2 -PversionCode=3 2>&1 | tee android-build.log
+      - name: Upload Android build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mawjictvh-android-build-diagnostics
+          path: |
+            android-build.log
+            composeApp/build/reports/**
+            composeApp/build/test-results/**
+          if-no-files-found: warn
+          retention-days: 14
       - name: Verify separate Android application identity
         shell: bash
         run: |

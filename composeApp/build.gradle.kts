@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
@@ -8,8 +9,8 @@ plugins {
     id("com.android.application")
 }
 
-val appVersion = providers.gradleProperty("versionName").orElse("0.1.0").get()
-val appVersionCode = providers.gradleProperty("versionCode").orElse("1").get().toInt()
+val appVersion = providers.gradleProperty("versionName").orElse("0.1.2").get()
+val appVersionCode = providers.gradleProperty("versionCode").orElse("3").get().toInt()
 
 kotlin {
     androidTarget {
@@ -44,6 +45,7 @@ kotlin {
         val desktopTest by getting {
             dependencies {
                 implementation(kotlin("test"))
+                implementation("junit:junit:4.13.2")
             }
         }
     }
@@ -86,5 +88,17 @@ compose.desktop {
                 iconFile.set(rootProject.file("assets/icons/mawjictvh.png"))
             }
         }
+    }
+}
+
+
+tasks.withType<Test>().configureEach {
+    useJUnit()
+    testLogging {
+        events("passed", "skipped", "failed", "standardOut", "standardError")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showCauses = true
+        showExceptions = true
+        showStackTraces = true
     }
 }

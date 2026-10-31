@@ -8,5 +8,6 @@ interface HtspTransport {
     fun close()
 }
 
-expect fun createHtspTransport(): HtspTransport
+expect fun createHtspTransport(useTls: Boolean = false): HtspTransport
 expect fun sha1(data: ByteArray): ByteArray
+expect fun currentEpochSeconds(): Long

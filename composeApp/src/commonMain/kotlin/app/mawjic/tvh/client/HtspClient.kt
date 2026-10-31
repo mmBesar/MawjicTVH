@@ -7,6 +7,7 @@ import app.mawjic.tvh.protocol.HtsValue
 import app.mawjic.tvh.protocol.HtspTransport
 import app.mawjic.tvh.protocol.hbin
 import app.mawjic.tvh.protocol.hstr
+import app.mawjic.tvh.protocol.currentEpochSeconds
 import app.mawjic.tvh.protocol.s64
 import app.mawjic.tvh.protocol.sha1
 import kotlinx.coroutines.CancellationException
@@ -98,9 +99,20 @@ class HtspClient(
                 }
             }
 
-            // Enabling async metadata causes Tvheadend to send the initial channel/tag/EPG
-            // snapshot, followed by change notifications and initialSyncCompleted.
-            request("enableAsyncMetadata", HtsMessage.emptyMap())
+            // Tvheadend defaults async EPG delivery to OFF. `epg=1` is required.
+            // In the current server implementation, `lastUpdate` is the lower bound
+            // for EPG event start times (events at/before it are skipped), while
+            // `epgMaxTime` defines the rolling upper bound. Keep a 12-hour backfill
+            // so long-running programmes which began before now are still included.
+            val now = currentEpochSeconds()
+            request(
+                "enableAsyncMetadata",
+                HtsMessage.mapOf(
+                    "epg" to s64(1),
+                    "lastUpdate" to s64((now - EPG_BACKFILL_SECONDS).coerceAtLeast(0)),
+                    "epgMaxTime" to s64(now + EPG_LOOKAHEAD_SECONDS),
+                ),
+            )
 
             return HtspServerInfo(
                 name = hello.text("servername") ?: "Tvheadend",
@@ -191,6 +203,8 @@ class HtspClient(
         const val PREFERRED_HTSP_VERSION = 44
         const val MIN_HTSP_VERSION = 6
         const val CLIENT_NAME = "MawjicTVH"
-        const val CLIENT_VERSION = "0.1.0"
+        const val CLIENT_VERSION = "0.1.2"
+        const val EPG_BACKFILL_SECONDS = 12L * 60L * 60L
+        const val EPG_LOOKAHEAD_SECONDS = 14L * 24L * 60L * 60L
     }
 }

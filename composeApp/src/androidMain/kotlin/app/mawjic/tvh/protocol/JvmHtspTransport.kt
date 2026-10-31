@@ -5,28 +5,49 @@ import java.io.InputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.MessageDigest
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLParameters
+import javax.net.ssl.SSLSocket
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-actual fun createHtspTransport(): HtspTransport = JvmHtspTransport()
+actual fun createHtspTransport(useTls: Boolean): HtspTransport = JvmHtspTransport(useTls)
 
 actual fun sha1(data: ByteArray): ByteArray = MessageDigest.getInstance("SHA-1").digest(data)
 
-private class JvmHtspTransport : HtspTransport {
+actual fun currentEpochSeconds(): Long = System.currentTimeMillis() / 1_000L
+
+private class JvmHtspTransport(private val useTls: Boolean) : HtspTransport {
     private var socket: Socket? = null
 
     override suspend fun connect(host: String, port: Int) = withContext(Dispatchers.IO) {
         require(host.isNotBlank()) { "Server address cannot be empty" }
         require(port in 1..65535) { "Port must be between 1 and 65535" }
-        val connection = Socket()
+        val address = InetSocketAddress(host.trim(), port)
+        val raw = Socket()
+        var active: Socket = raw
         try {
-            connection.tcpNoDelay = true
-            connection.keepAlive = true
-            connection.connect(InetSocketAddress(host.trim(), port), CONNECT_TIMEOUT_MS)
-            connection.soTimeout = 0
-            socket = connection
+            raw.tcpNoDelay = true
+            raw.keepAlive = true
+            raw.connect(address, CONNECT_TIMEOUT_MS)
+            if (useTls) {
+                val factory = HttpsURLConnection.getDefaultSSLSocketFactory()
+                val secure = factory.createSocket(raw, host.trim(), port, true) as SSLSocket
+                val parameters: SSLParameters = secure.sslParameters
+                parameters.endpointIdentificationAlgorithm = "HTTPS"
+                secure.sslParameters = parameters
+                secure.soTimeout = TLS_HANDSHAKE_TIMEOUT_MS
+                secure.startHandshake()
+                // SSLSocket does not enable hostname checks by default. Setting the HTTPS
+                // endpoint-identification algorithm makes the TLS handshake validate the
+                // certificate SAN against the requested host (without a trust-all verifier).
+                active = secure
+            }
+            active.soTimeout = 0
+            socket = active
         } catch (error: Throwable) {
-            runCatching { connection.close() }
+            runCatching { active.close() }
+            runCatching { raw.close() }
             throw error
         }
     }
@@ -76,5 +97,6 @@ private class JvmHtspTransport : HtspTransport {
 
     private companion object {
         const val CONNECT_TIMEOUT_MS = 10_000
+        const val TLS_HANDSHAKE_TIMEOUT_MS = 10_000
     }
 }
