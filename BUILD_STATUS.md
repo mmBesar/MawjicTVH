@@ -27,6 +27,12 @@ Android's Media3 supports MPEG-TS as a progressive container, but decoding still
 - Artwork fetching/authentication, full EPG timeline UI, favourites, search, reconnection, saved server profiles, credential vault, tuner diagnostics, DVR/recording controls, and release signing.
 - Embedded Linux video surface; Linux playback currently opens the external mpv window.
 
+## CI hotfix — Compose disposal import
+
+- Removed the invalid `import androidx.compose.runtime.onDispose` from `App.kt`. `onDispose` is a member of `DisposableEffectScope` and is resolved inside `DisposableEffect { ... }`; the cleanup block itself is unchanged.
+- Added a source-sanity guard that emits a direct explanation if that invalid import is reintroduced.
+- This addresses the reported shared Kotlin compile failure; a hosted CI run is still required to discover any subsequent compile or packaging errors.
+
 ## Verification performed in the authoring environment
 
 - Compiled the common HTSP codec, session/client, metadata repository, transport contract, JVM socket transport, and new playback-ticket service with the installed Kotlin compiler.

@@ -17,6 +17,9 @@ grep -Rq 'applicationId = "app.mawjic.tvh"' "$ROOT/composeApp/build.gradle.kts" 
 grep -Rq 'namespace = "app.mawjic.tvh"' "$ROOT/composeApp/build.gradle.kts" || fail 'Android namespace is not app.mawjic.tvh.'
 grep -Rq 'MawjicTVH' "$ROOT/composeApp/src/androidMain/AndroidManifest.xml" || fail 'Android label is missing.'
 [[ -s "$ROOT/assets/icons/mawjictvh.svg" && -s "$ROOT/assets/icons/mawjictvh.png" ]] || fail 'The distinct Tvheadend app icon is missing.'
+if grep -RFn 'import androidx.compose.runtime.onDispose' "$SRC"; then
+  fail 'Do not import onDispose: it is a DisposableEffectScope member and is available only inside DisposableEffect { ... }.'
+fi
 
 if grep -RniE 'app\.mawjic\.tv([^h]|$)|M3U|XMLTV|PlaylistParser|playlist source' "$SRC"; then
   fail 'Legacy Mawjic IPTV identity or playlist/XMLTV implementation found in application source.'
